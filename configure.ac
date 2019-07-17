@@ -1128,6 +1128,84 @@ AM_CONDITIONAL(HAS_atxmega32e5, test "x$HAS_atxmega32e5" = "xyes")
 CHECK_AVR_DEVICE(avrxmega3)
 AM_CONDITIONAL(HAS_avrxmega3, test "x$HAS_avrxmega3" = "xyes")
 
+CHECK_AVR_DEVICE(attiny202)
+AM_CONDITIONAL(HAS_attiny202, test "x$HAS_attiny202" = "xyes")
+
+CHECK_AVR_DEVICE(attiny204)
+AM_CONDITIONAL(HAS_attiny204, test "x$HAS_attiny204" = "xyes")
+
+CHECK_AVR_DEVICE(attiny212)
+AM_CONDITIONAL(HAS_attiny212, test "x$HAS_attiny212" = "xyes")
+
+CHECK_AVR_DEVICE(attiny214)
+AM_CONDITIONAL(HAS_attiny214, test "x$HAS_attiny214" = "xyes")
+
+CHECK_AVR_DEVICE(attiny402)
+AM_CONDITIONAL(HAS_attiny402, test "x$HAS_attiny402" = "xyes")
+
+CHECK_AVR_DEVICE(attiny404)
+AM_CONDITIONAL(HAS_attiny404, test "x$HAS_attiny404" = "xyes")
+
+CHECK_AVR_DEVICE(attiny406)
+AM_CONDITIONAL(HAS_attiny406, test "x$HAS_attiny406" = "xyes")
+
+CHECK_AVR_DEVICE(attiny412)
+AM_CONDITIONAL(HAS_attiny412, test "x$HAS_attiny412" = "xyes")
+
+CHECK_AVR_DEVICE(attiny414)
+AM_CONDITIONAL(HAS_attiny414, test "x$HAS_attiny414" = "xyes")
+
+CHECK_AVR_DEVICE(attiny416)
+AM_CONDITIONAL(HAS_attiny416, test "x$HAS_attiny416" = "xyes")
+
+CHECK_AVR_DEVICE(attiny417)
+AM_CONDITIONAL(HAS_attiny417, test "x$HAS_attiny417" = "xyes")
+
+CHECK_AVR_DEVICE(attiny804)
+AM_CONDITIONAL(HAS_attiny804, test "x$HAS_attiny804" = "xyes")
+
+CHECK_AVR_DEVICE(attiny806)
+AM_CONDITIONAL(HAS_attiny806, test "x$HAS_attiny806" = "xyes")
+
+CHECK_AVR_DEVICE(attiny807)
+AM_CONDITIONAL(HAS_attiny807, test "x$HAS_attiny807" = "xyes")
+
+CHECK_AVR_DEVICE(attiny814)
+AM_CONDITIONAL(HAS_attiny814, test "x$HAS_attiny814" = "xyes")
+
+CHECK_AVR_DEVICE(attiny816)
+AM_CONDITIONAL(HAS_attiny816, test "x$HAS_attiny816" = "xyes")
+
+CHECK_AVR_DEVICE(attiny817)
+AM_CONDITIONAL(HAS_attiny817, test "x$HAS_attiny817" = "xyes")
+
+CHECK_AVR_DEVICE(attiny1604)
+AM_CONDITIONAL(HAS_attiny1604, test "x$HAS_attiny1604" = "xyes")
+
+CHECK_AVR_DEVICE(attiny1606)
+AM_CONDITIONAL(HAS_attiny1606, test "x$HAS_attiny1606" = "xyes")
+
+CHECK_AVR_DEVICE(attiny1607)
+AM_CONDITIONAL(HAS_attiny1607, test "x$HAS_attiny1607" = "xyes")
+
+CHECK_AVR_DEVICE(attiny1614)
+AM_CONDITIONAL(HAS_attiny1614, test "x$HAS_attiny1614" = "xyes")
+
+CHECK_AVR_DEVICE(attiny1616)
+AM_CONDITIONAL(HAS_attiny1616, test "x$HAS_attiny1616" = "xyes")
+
+CHECK_AVR_DEVICE(attiny1617)
+AM_CONDITIONAL(HAS_attiny1617, test "x$HAS_attiny1617" = "xyes")
+
+CHECK_AVR_DEVICE(attiny3214)
+AM_CONDITIONAL(HAS_attiny3214, test "x$HAS_attiny3214" = "xyes")
+
+CHECK_AVR_DEVICE(attiny3216)
+AM_CONDITIONAL(HAS_attiny3216, test "x$HAS_attiny3216" = "xyes")
+
+CHECK_AVR_DEVICE(attiny3217)
+AM_CONDITIONAL(HAS_attiny3217, test "x$HAS_attiny3217" = "xyes")
+
 
 # avrxmega4
 CHECK_AVR_DEVICE(avrxmega4)
@@ -1579,11 +1657,37 @@ AC_CONFIG_FILES([
 # avrxmega3
 AC_CONFIG_FILES([
 	avr/lib/avrxmega3/Makefile
+	avr/lib/avrxmega3/attiny1604/Makefile
+	avr/lib/avrxmega3/attiny1606/Makefile
+	avr/lib/avrxmega3/attiny1607/Makefile
+	avr/lib/avrxmega3/attiny1614/Makefile
+	avr/lib/avrxmega3/attiny1616/Makefile
+	avr/lib/avrxmega3/attiny1617/Makefile
+	avr/lib/avrxmega3/attiny3214/Makefile
+	avr/lib/avrxmega3/attiny3216/Makefile
+	avr/lib/avrxmega3/attiny3217/Makefile
 ])
 
 # avrxmega3/short-calls
 AC_CONFIG_FILES([
 	avr/lib/avrxmega3/short-calls/Makefile
+	avr/lib/avrxmega3/short-calls/attiny202/Makefile
+	avr/lib/avrxmega3/short-calls/attiny204/Makefile
+	avr/lib/avrxmega3/short-calls/attiny212/Makefile
+	avr/lib/avrxmega3/short-calls/attiny214/Makefile
+	avr/lib/avrxmega3/short-calls/attiny402/Makefile
+	avr/lib/avrxmega3/short-calls/attiny404/Makefile
+	avr/lib/avrxmega3/short-calls/attiny406/Makefile
+	avr/lib/avrxmega3/short-calls/attiny412/Makefile
+	avr/lib/avrxmega3/short-calls/attiny414/Makefile
+	avr/lib/avrxmega3/short-calls/attiny416/Makefile
+	avr/lib/avrxmega3/short-calls/attiny417/Makefile
+	avr/lib/avrxmega3/short-calls/attiny804/Makefile
+	avr/lib/avrxmega3/short-calls/attiny806/Makefile
+	avr/lib/avrxmega3/short-calls/attiny807/Makefile
+	avr/lib/avrxmega3/short-calls/attiny814/Makefile
+	avr/lib/avrxmega3/short-calls/attiny816/Makefile
+	avr/lib/avrxmega3/short-calls/attiny817/Makefile
 ])
 
 # avrxmega4

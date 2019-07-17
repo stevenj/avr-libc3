@@ -27,6 +27,10 @@ attiny2313a attiny24 attiny24a attiny25 attiny26 attiny261 attiny261a \
 attiny28 attiny4 attiny40 attiny4313 attiny43u attiny44 attiny44a attiny441 \
 attiny45 attiny461 attiny461a attiny48 attiny5 attiny84 attiny84a attiny841 \
 attiny85 attiny861 attiny861a attiny87 attiny88 attiny9 atxmega128a1 \
+attiny202 attiny204 attiny212 attiny214 attiny402 attiny404 attiny406 \
+attiny412 attiny414 attiny416 attiny417 attiny804 attiny806 attiny807 \
+attiny814 attiny816 attiny817 attiny1604 attiny1606 attiny1607 \
+attiny1614 attiny1616 attiny1617 attiny3214 attiny3216 attiny3217 \
 atxmega128a1u atxmega128a3 atxmega128d3 atxmega16a4 atxmega16d4 \
 atxmega192a3 atxmega192d3 atxmega256a3 atxmega256a3b atxmega256d3 \
 atxmega32a4 atxmega32d4 atxmega64a1 atxmega64a1u atxmega64a3 \
