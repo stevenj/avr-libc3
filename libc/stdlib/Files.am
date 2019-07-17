@@ -53,6 +53,9 @@ stdlib_a_c_sources = \
 	dtoa_conv.h \
 	stdlib_private.h
 
+stdlib_a_cxx_sources = \
+	new.cc
+
 stdlib_a_asm_sources = \
 	abort.S \
 	atof.S \
