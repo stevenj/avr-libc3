@@ -1071,20 +1071,30 @@
 #define PCINT15_PIN   PINB
 #define PCINT15_BIT   7
 
-#define RXD_DDR   DDRD
-#define RXD_PORT  PORTD
-#define RXD_PIN   PIND
-#define RXD_BIT   0
+#define RXD0_DDR   DDRD
+#define RXD0_PORT  PORTD
+#define RXD0_PIN   PIND
+#define RXD0_BIT   0
+
+#define RXD1_DDR   DDRD
+#define RXD1_PORT  PORTD
+#define RXD1_PIN   PIND
+#define RXD1_BIT   2
 
 #define PCINT24_DDR   DDRD
 #define PCINT24_PORT  PORTD
 #define PCINT24_PIN   PIND
 #define PCINT24_BIT   0
 
-#define TXD_DDR   DDRD
-#define TXD_PORT  PORTD
-#define TXD_PIN   PIND
-#define TXD_BIT   1
+#define TXD0_DDR   DDRD
+#define TXD0_PORT  PORTD
+#define TXD0_PIN   PIND
+#define TXD0_BIT   1
+
+#define TXD1_DDR   DDRD
+#define TXD1_PORT  PORTD
+#define TXD1_PIN   PIND
+#define TXD1_BIT   3
 
 #define PCINT25_DDR   DDRD
 #define PCINT25_PORT  PORTD
