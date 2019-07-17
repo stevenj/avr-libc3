@@ -26,3 +26,10 @@ This patch fixes some build warnings and a potential wrong-code issues in GETBYT
 ### Merged Upstream Patch 9594
 
 Add missing TXD0/TXD1/RXD0/RXD1 pins for the ATmega324PA
+
+### Merged Upstream Patch 9405
+
+This adds new ISR_NOGCISR macro to be used as ISR attribute with a similar naming like the already existing ones.  For the feature, see
+
+https://gcc.gnu.org/onlinedocs/gcc/AVR-Function-Attributes.html
+
