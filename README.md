@@ -36,3 +36,10 @@ This adds new ISR_NOGCISR macro to be used as ISR attribute with a similar namin
 ### Merged Upstream Patch 9416
 
 AVR_TINY specific implementation of _delay_loop_2
+
+### Merged Upstream Patch 9437
+
+Some attiny chips use the RSIG bit instead of SIGRD to read from the signature
+imprint area. From a quick grep, this concerns: tn1634, tn4313, tn441, tn828,
+tn841, tn24, tn44, tn84, tn25, tn45, tn85. This changes was tested on a tn841
+only, where no other changes are needed than using another name for this bit.
