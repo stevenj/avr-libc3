@@ -1,6 +1,5 @@
 # Copyright (c) 2004,  Theodore A. Roth
 # Copyright (c) 2005, 2008, 2009  Anatoly Sokolov
-# Copyright (c) 2011 Bradley Jarvis
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -50,12 +49,9 @@ AM_CPPFLAGS = -I$(top_srcdir)/common -I$(top_srcdir)/include -I$(top_builddir)/i
 
 AVRLIB_CFLAGS = @CDEBUG@ -Wall -W -Wstrict-prototypes -mmcu=$(AVR_TARGET) $(AVR_TARGET_DEFS) $(AVR_TARGET_CFLAGS)
 
-AVRLIB_CXXFLAGS = @CDEBUG@ -Wall -W -mmcu=$(AVR_TARGET) $(AVR_TARGET_DEFS) $(AVR_TARGET_CFLAGS)
-
 AVRLIB_ASFLAGS = -x assembler-with-cpp @ASDEBUG@ -mmcu=$(AVR_TARGET) $(AVR_TARGET_DEFS) $(AVR_TARGET_ASFLAGS)
 
 AM_CFLAGS = $(AVRLIB_CFLAGS)
-AM_CXXFLAGS = $(AVRLIB_CXXFLAGS)
 AM_CCASFLAGS = $(AM_CPPFLAGS) $(AVRLIB_ASFLAGS)
 
 __install_dir = $(prefix)/avr/lib/$(AVR_INSTALL_DIR)
@@ -81,7 +77,6 @@ include $(top_srcdir)/libc/time/Rules.am
 
 nodist_libc_a_SOURCES = \
 	$(stdlib_a_c_sources) \
-	$(stdlib_a_cxx_sources) \
 	$(stdlib_a_asm_sources) \
 	$(pmstring_a_c_sources) \
 	$(pmstring_a_asm_sources) \

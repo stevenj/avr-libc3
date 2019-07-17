@@ -33,6 +33,5 @@ include $(top_srcdir)/libc/stdlib/Files.am
 
 EXTRA_DIST = \
 	$(stdlib_a_c_sources) \
-	$(stdlib_a_cxx_sources) \
 	$(stdlib_a_asm_sources) \
 	$(stdlib_a_extra_dist)
