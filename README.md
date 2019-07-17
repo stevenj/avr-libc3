@@ -31,5 +31,8 @@ Add missing TXD0/TXD1/RXD0/RXD1 pins for the ATmega324PA
 
 This adds new ISR_NOGCISR macro to be used as ISR attribute with a similar naming like the already existing ones.  For the feature, see
 
-https://gcc.gnu.org/onlinedocs/gcc/AVR-Function-Attributes.html
+<https://gcc.gnu.org/onlinedocs/gcc/AVR-Function-Attributes.html>
 
+### Merged Upstream Patch 9416
+
+AVR_TINY specific implementation of _delay_loop_2
