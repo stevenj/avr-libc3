@@ -1,0 +1,9 @@
+---
+BasedOnStyle: LLVM
+ColumnLimit: 90
+AllowShortCaseLabelsOnASingleLine: 'false'
+BreakBeforeBraces: Linux
+IndentCaseLabels: 'true'
+IndentPPDirectives: AfterHash
+
+...
