@@ -1,88 +1,109 @@
 
-# /avr-libc/
-/avr-libc/aclocal.m4
-/avr-libc/depcomp
-/avr-libc/config.guess
-/avr-libc/config.h.in
-/avr-libc/config.sub
-/avr-libc/configure
-/avr-libc/install-sh
-/avr-libc/missing
-/avr-libc/mkinstalldirs
-/avr-libc/Makefile.in
-/avr-libc/avr
-/avr-libc/autom4te.cache
-/avr-libc/*.diff
-/avr-libc/*.patch
+# microchip-packs
+/microchip-packs
 
-# /avr-libc/common/
-/avr-libc/common/Makefile.in
-/avr-libc/common/*.diff
-/avr-libc/common/*.patch
+# vscode config
+/.vscode
 
-# /avr-libc/crt1/
-/avr-libc/crt1/Makefile.in
+# /
+/aclocal.m4
+/depcomp
+/config.guess
+/config.h.in
+/config.sub
+/configure
+/install-sh
+/missing
+/mkinstalldirs
+/Makefile.in
+/avr
+/autom4te.cache
+/*.diff
+/*.patch
 
-# /avr-libc/devtools/
-/avr-libc/devtools/Makefile.in
-/avr-libc/devtools/*.diff
-/avr-libc/devtools/*.patch
+# /common/
+/common/Makefile.in
+/common/*.diff
+/common/*.patch
 
-# /avr-libc/doc/
-/avr-libc/doc/Makefile.in
+# /crt1/
+/crt1/Makefile.in
 
-# /avr-libc/doc/api/
-/avr-libc/doc/api/Makefile.in
+# /devtools/
+/devtools/Makefile.in
+/devtools/*.diff
+/devtools/*.patch
 
-# /avr-libc/doc/examples/
-/avr-libc/doc/examples/Makefile.in
+# /doc/
+/doc/Makefile.in
 
-# /avr-libc/include/
-/avr-libc/include/Makefile.in
-/avr-libc/include/*.diff
-/avr-libc/include/*.patch
+# /doc/api/
+/doc/api/Makefile.in
 
-# /avr-libc/include/avr/
-/avr-libc/include/avr/Makefile.in
-/avr-libc/include/avr/*.diff
-/avr-libc/include/avr/*.patch
+# /doc/examples/
+/doc/examples/Makefile.in
 
-# /avr-libc/include/compat/
-/avr-libc/include/compat/Makefile.in
-/avr-libc/include/compat/*.diff
-/avr-libc/include/compat/*.patch
+# /include/
+/include/Makefile.in
+/include/*.diff
+/include/*.patch
 
-# /avr-libc/include/util/
-/avr-libc/include/util/Makefile.in
-/avr-libc/include/util/*.diff
-/avr-libc/include/util/*.patch
+# /include/avr/
+/include/avr/Makefile.in
+/include/avr/*.diff
+/include/avr/*.patch
 
-# /avr-libc/libc/
-/avr-libc/libc/Makefile.in
+# /include/avr/legacyio
+/include/avr/legacyio/Makefile.in
+/include/avr/legacyio/*.diff
+/include/avr/legacyio/*.patch
 
-# /avr-libc/libc/misc/
-/avr-libc/libc/misc/Makefile.in
+# /include/avr/io
+/include/avr/io/Makefile.in
+/include/avr/io/*.diff
+/include/avr/io/*.patch
 
-# /avr-libc/libc/pmstring/
-/avr-libc/libc/pmstring/Makefile.in
+# /include/avr/extraio
+/include/avr/io/Makefile.in
+/include/avr/io/*.diff
+/include/avr/io/*.patch
 
-# /avr-libc/libc/stdio/
-/avr-libc/libc/stdio/Makefile.in
+# /include/compat/
+/include/compat/Makefile.in
+/include/compat/*.diff
+/include/compat/*.patch
 
-# /avr-libc/libc/stdlib/
-/avr-libc/libc/stdlib/Makefile.in
+# /include/util/
+/include/util/Makefile.in
+/include/util/*.diff
+/include/util/*.patch
 
-# /avr-libc/libc/string/
-/avr-libc/libc/string/Makefile.in
+# /libc/
+/libc/Makefile.in
 
-# /avr-libc/libm/
-/avr-libc/libm/Makefile.in
+# /libc/misc/
+/libc/misc/Makefile.in
 
-# /avr-libc/libm/fplib/
-/avr-libc/libm/fplib/Makefile.in
+# /libc/pmstring/
+/libc/pmstring/Makefile.in
 
-# /avr-libc/scripts/
-/avr-libc/scripts/Makefile.in
+# /libc/stdio/
+/libc/stdio/Makefile.in
 
-# /avr-libc/xml/
-/avr-libc/xml/*.pyc
+# /libc/stdlib/
+/libc/stdlib/Makefile.in
+
+# /libc/string/
+/libc/string/Makefile.in
+
+# /libm/
+/libm/Makefile.in
+
+# /libm/fplib/
+/libm/fplib/Makefile.in
+
+# /scripts/
+/scripts/Makefile.in
+
+# /xml/
+/xml/*.pyc
