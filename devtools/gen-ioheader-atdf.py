@@ -42,16 +42,346 @@
 #       updates, as all is required is to upgrade pack, and regenerate.  No need
 #       to extract any files from the pack.
 #
-
-GEN_IO_HEADER_ATDF_VERSION = "0.90"
-
 import argparse
 import os, sys
 import zipfile
 from lxml import etree
 from textwrap import wrap
+import math
 import pprint
 
+
+def xint(str):
+    """ Converts a Hex or Decimal encoded number to a int.
+        Saves having to worry about whats encoded in the atdf files. """
+    if str.startswith("0x"):
+        return int(str, 16)
+    return int(str)
+
+
+class AVR_ATDF_File:
+    def __init__(self, data):
+        # Read the XML Data, and save it for later processing.
+        self.dom = etree.fromstring(data)
+
+    def getDeviceName(self):
+        return self.dom.find(".//devices/device").get("name")
+
+    def getArchitecture(self):
+        return self.dom.find(".//devices/device").get("architecture").upper()
+
+    def get_module_base_address(self, instance):
+        # Gets the lowest USED address of a module
+        # This is necessary because some devices define EVERYTHING as starting at 0x00
+        # when, they actually don't (Attiny10 I am looking at you)
+        # So the TRUE base address is the module offset, plus the lowest used address of the module.
+        # This MAY have the side effect of giving slightly different results from standard
+        # headers, IF the module starts with reserved registers, but should not impede operation
+        # in any way.
+
+        # First get the module base address:
+        periphs = self.dom.find(
+            './/peripherals/module/instance/register-group[@name="{}"]'.format(instance)
+        )
+        base_addr = xint(periphs.get("offset"))
+
+        # Now find lowest address in the registers.
+        min_addr = None
+        regs = self.dom.find(
+            './/modules/module/register-group[@name="{}"]'.format(instance)
+        )
+        for reg in regs:
+            debug_group(reg)
+            addr = xint(reg.get("offset"))
+            if (min_addr == None) or (addr < min_addr):
+                min_addr = addr
+        min_addr += base_addr  # minimum absolute address.
+
+        # Return the peripheral Base, and minimum address so we can use it for offset calculations.
+        return (base_addr, min_addr)
+
+    def getPeripheralModule(self, name):
+        return self.dom.find('.//peripherals/module[@name="{}"]'.format(name))
+
+    def getPeripheralModuleInstance(self, name):
+        return self.dom.find('.//peripherals/module/instance[@name="{}"]'.format(name))
+
+    def getAllPeripheralModules(self):
+        return self.dom.findall(".//peripherals/module")
+
+    def getModuleInstanceRegisters(self, name):
+        return self.dom.find(
+            './/peripherals/module/instance/register-group[@name-in-module="{}"]'.format(
+                name
+            )
+        )
+
+    def getModuleRegisters(self, module, group=None):
+        if group == None:
+            group = module
+        return self.dom.findall(
+            './/modules/module[@name="{0}"]/register-group[@name="{1}"]/register'.format(
+                module, group
+            )
+        )
+
+    def getAllModules(self):
+        return self.dom.findall(".//modules/module")
+
+    def getAllModuleNames(self):
+        module_names = []
+        for module in self.getAllModules():
+            module_names.append(module.get("name"))
+        return module_names
+
+    def getModule(self, module):
+        return self.dom.find('.//modules/module[@name="{0}"]'.format(module))
+
+    def getAllModuleRegisterGroups(self, module=None):
+        if module is None:
+            search_term = ".//modules/module/register-group"
+        else:
+            search_term = './/modules/module[@name="{0}"]/register-group'
+
+        return self.dom.findall(search_term.format(module))
+
+    def getModuleRegisterGroup(self, group):
+        return self.dom.find(
+            './/modules/module/register-group[@name="{}"]'.format(group)
+        )
+
+    def getAllModuleRegisters(self, module):
+        return self.dom.findall(
+            './/modules/module[@name="{0}"]/register-group/register'.format(module)
+        )
+
+    def getModuleRegisterValueGroup(self, module, group):
+        return self.dom.find(
+            './/modules/module[@name="{0}"]/value-group[@name="{1}"]'.format(
+                module, group
+            )
+        )
+
+    def getModuleUnion(self, union_name):
+        return self.dom.find(
+            './modules/module/register-group[@class="union"][@name="{}"]'.format(
+                union_name
+            )
+        )
+
+    def getAllRegisters(self, module, group):
+        """ For a module and register group, return an array of all registers.
+            Array entry being an array of [MODNAME, UNIONNAME, NAME, OFFSET, SIZE, CAPTION]
+            Sorted by OFFSET.
+        """
+        regs = []
+        for reg in self.getModuleRegisters(module, group):
+            regs.append(
+                [
+                    reg.get("name"),
+                    xint(reg.get("offset")),
+                    xint(reg.get("size")),
+                    reg.get("caption"),
+                ]
+            )
+        return sorted(regs, key=lambda reg: reg[1])
+
+    def getAllInterrupts(self):
+        # Returns a sorted list of interrupts of the format:
+        # [ base address, modnum, name, comment ]
+        # Note, if name is None, then this is a group break, and only the comment should be used.
+        # modnum is the number of the modules which share the IRQ, used for sorting.
+        # ie, if two irq's share a offset, the first has a mod num of 0, the next 1, and so on.
+        all_ints = []
+
+        def get_modnum(index):
+            modnum = 0
+            for x in all_ints:
+                if x[0] == index:
+                    if x[1] >= modnum:
+                        modnum = x[1] + 1
+
+            return modnum
+
+        last_instance = None
+        for intr in self.dom.findall(".//interrupts/"):
+            if intr.tag == "interrupt":
+                """
+                <interrupt index="10" module-instance="TCA0" name="LCMP0"/>
+                """
+                instance_name = intr.get("module-instance")
+                intr_name = intr.get("name")
+
+                name = "{}_{}_vect".format(instance_name, intr_name)
+                comment = intr.get("caption")
+                if comment is None:
+                    comment = "{} - {} Interrupt".format(
+                        intr.get("module-instance"), intr.get("name")
+                    )
+
+                intr_index = xint(intr.get("index"))
+                modnum = get_modnum(intr_index)
+
+                if instance_name != last_instance:
+                    all_ints.append(
+                        [
+                            intr_index,
+                            modnum,
+                            None,
+                            "{} interrupt vectors".format(instance_name),
+                        ]
+                    )
+                    last_instance = instance_name
+
+                all_ints.append([intr_index, modnum, name, comment])
+
+            elif intr.tag == "interrupt-group":
+                """
+                <interrupt-group index="3" module-instance="EDMA" name-in-module="EDMA"/>
+
+                ...
+
+                <modules>
+                    <module name="EDMA" id="I3002" version="XMEGAE" caption="Enhanced DMA Controller">
+                        <interrupt-group name="EDMA">
+                            <interrupt index="0" name="CH0" caption="EDMA Channel 0 Interrupt"/>
+                            <interrupt index="1" name="CH1" caption="EDMA Channel 1 Interrupt"/>
+                            <interrupt index="2" name="CH2" caption="EDMA Channel 2 Interrupt"/>
+                            <interrupt index="3" name="CH3" caption="EDMA Channel 3 Interrupt"/>
+                        </interrupt-group>
+                    </module>
+                </modules>
+                """
+
+                base_index = xint(intr.get("index"))
+                instance_name = intr.get("module-instance")
+                module_name = intr.get("name-in-module")
+
+                for modintr in self.dom.findall(
+                    './/modules/module/interrupt-group[@name="{}"]'.format(module_name)
+                ):
+                    for subintr in modintr:
+                        intr_index = base_index + xint(subintr.get("index"))
+                        modnum = get_modnum(intr_index)
+                        subintr_name = subintr.get("name")
+
+                        if last_instance != instance_name:
+                            all_ints.append(
+                                [
+                                    intr_index,
+                                    modnum,
+                                    None,
+                                    "{} interrupt vectors".format(instance_name),
+                                ]
+                            )
+                            last_instance = instance_name
+
+                        intr_name = modintr.get("name")
+                        name = "{}_{}_vect".format(instance_name, subintr_name)
+                        comment = modintr.get("caption")
+                        if comment is None:
+                            comment = "{} - {} Interrupt".format(
+                                instance_name, subintr_name
+                            )
+
+                        all_ints.append([intr_index, modnum, name, comment])
+
+            else:
+                print("ERROR: Unkonwn interrupt entry {}".format(intr.tag))
+                exit(1)
+
+        return all_ints  # sorted(all_ints, key=int_sorting)
+
+    def getPortDefinesFromPeripheralsModule(self):
+        """ 
+        Returns an array of peripherals found in the peripherals module, 
+        with the format:
+
+        <peripherals>
+            <module name="PORT">
+                <instance name="PORTB" caption="I/O Port">
+                    <register-group name="PORTB" name-in-module="PORTB" offset="0x00" address-space="data" caption="I/O Port"/>
+                    <signals>
+                        <signal group="P" function="default" pad="PB0" index="0"/>
+                        <signal group="P" function="default" pad="PB1" index="1"/>
+                        <signal group="P" function="default" pad="PB2" index="2"/>
+                        <signal group="P" function="default" pad="PB3" index="3"/>
+                    </signals>
+                </instance>
+            </module>
+        
+        <peripherals>
+            <module id="I2103" name="PORT">
+                <instance name="PORTA">
+                    <register-group address-space="data" name="PORTA" name-in-module="PORT" offset="0x0400"/>
+                    <signals>
+                        <signal function="IOPORT" group="PIN" index="0" pad="PA0"/>
+                        <signal function="IOPORT" group="PIN" index="1" pad="PA1"/>
+                        <signal function="IOPORT" group="PIN" index="2" pad="PA2"/>
+                        <signal function="IOPORT" group="PIN" index="3" pad="PA3"/>
+                        <signal function="IOPORT" group="PIN" index="4" pad="PA4"/>
+                        <signal function="IOPORT" group="PIN" index="5" pad="PA5"/>
+                        <signal function="IOPORT" group="PIN" index="6" pad="PA6"/>
+                        <signal function="IOPORT" group="PIN" index="7" pad="PA7"/>
+                    </signals>
+                </instance>
+        """
+        defines = []
+        portpins = 0
+        last_portname = "PXX"
+        module = self.getPeripheralModule("PORT")
+
+        # aquire signal groups
+        for signal_group in module.findall(".//instance/signals/signal"):
+            portname = signal_group.get("pad")
+            portindex = signal_group.get("index")
+            # Line break between different ports.
+            if last_portname[:-1] != portname[:-1]:
+                defines.append(["", ""])
+            if (portname is not None) and (portindex is not None):
+                defines.append([portname, "({})".format(portindex)])
+                portpins += 1
+            last_portname = portname
+
+        if portpins == 0:
+            return None
+        return defines
+
+    def getVectorSize(self):
+        pgmsize = xint(
+            self.dom.find(
+                ".//address-spaces/address-space/[@name='prog'][@id='prog']"
+            ).get("size")
+        )
+
+        vectorsize = 0x02
+        if pgmsize > 8196:
+            vectorsize = 0x04
+
+        return vectorsize
+
+    def getAddressSpaces(self):
+        return self.dom.findall(".//address-spaces/address-space")
+
+    def getMemorySegment(self, name):
+        return self.dom.find(
+            './/address-spaces/address-space/memory-segment[@name="{}"]'.format(name)
+        )
+
+    def getMemorySegmentType(self, name):
+        return self.dom.find(
+            './/address-spaces/address-space/memory-segment[@type="{}"]'.format(name)
+        )
+
+    def getPropertyGroup(self, name):
+        return self.dom.findall(
+            './/property-groups/property-group[@name="{}"]/property'.format(name)
+        )
+
+
+GEN_IO_HEADER_ATDF_VERSION = "0.91"
+
+# TODO: Extract the Microchip license directly from include/component-version.h
 MicrochipLicense = """Generated Source Derived from data:
 Copyright (c) 2019 Microchip Technology Inc.
                    
@@ -97,52 +427,27 @@ HEADER_BEGIN = """
 #  define _AVR_{0}_H_INCLUDED
 
 """
-C_SECTION_BEGIN = """
-#if !defined (__ASSEMBLER__)
-
-#include <stdint.h>
-
-typedef volatile uint8_t  register8_t;
-typedef volatile uint16_t register16_t;
-typedef volatile uint32_t register32_t;
-
-#ifdef _REGISTER16
-#undef _REGISTER16
-#endif
-#define _REGISTER16(regname)   \\
-    __extension__ union \\
-    { \\
-        register16_t regname; \\
-        struct \\
-        { \\
-            register8_t regname ## L; \\
-            register8_t regname ## H; \\
-        }; \\
-    }
-
-#ifdef _REGISTER32
-#undef _REGISTER32
-#endif
-#define _REGISTER32(regname)  \\
-    __extension__ union \\
-    { \\
-        register32_t regname; \\
-        struct \\
-        { \\
-            register8_t regname ## 0; \\
-            register8_t regname ## 1; \\
-            register8_t regname ## 2; \\
-            register8_t regname ## 3; \\
-        }; \\
-    }
-
-"""
+C_SECTION_BEGIN = "#if !defined (__ASSEMBLER__)\n"
 
 ASM_SECTION_BEGIN = "#else\n"
 
 C_ASM_SECTION_END = "#endif\n"
 
 MAX_COLUMN = 80
+
+
+def sizeFields(data):
+    """ Take a 2 dimensional array and calculate the maximum size each element of each array entry """
+    results = []
+    for row in data:
+        c_count = 0
+        for column in row:
+            if len(results) <= c_count:
+                results.append(len(column))
+            elif len(column) > results[c_count]:
+                results[c_count] = len(column)
+            c_count += 1
+    return results
 
 
 def dir_path(string):
@@ -226,12 +531,6 @@ def chk_size(string, size):
     return len(string)
 
 
-def xint(str):
-    if str.startswith("0x"):
-        return int(str, 16)
-    return int(str)
-
-
 all_defines = {}  # Dictionary of all defines.
 
 
@@ -299,719 +598,586 @@ def emit_defines(defines, namespace="GLOBAL"):
             defoutput += "/* {} */\n".format(define[2])
         else:
             defoutput += "\n"
+
     return defoutput
 
 
-def get_module_base_address(dom, instance):
-    # Gets the lowest USED address of a module
-    # This is necessary because some devices define EVERYTHING as starting at 0x00
-    # when, they actually don't (Attiny10 I am looking at you)
-    # So the TRUE base address is the module offset, plus the lowest used address of the module.
-    # This MAY have the side effect of giving slightly different results from standard
-    # headers, IF the module starts with reserved registers, but should not impede operation
-    # in any way.
+def emit_enum(data):
+    enum_str = ""
+    padding = sizeFields(data)
 
-    # First get the module base address:
-    periphs = dom.find(
-        './/peripherals/module/instance/register-group[@name="{}"]'.format(instance)
-    )
-    base_addr = xint(periphs.get("offset"))
-
-    # Now find lowest address in the registers.
-    min_addr = None
-    regs = dom.find('.//modules/module/register-group[@name="{}"]'.format(instance))
-    for reg in regs:
-        debug_group(reg)
-        addr = xint(reg.get("offset"))
-        if (min_addr == None) or (addr < min_addr):
-            min_addr = addr
-    min_addr += base_addr  # minimum absolute address.
-
-    # Return the peripheral Base, and minimum address so we can use it for offset calculations.
-    return (base_addr, min_addr)
-
-
-def process_atdf(data, pack, filename, changelog):
-    # Process an .atdf XML file and generate a C/ASM header file.
-    # data : the textual data of the .atdf XML file.
-    # changelog : Changelog information to embed in the file header.
-    global all_defines
-    all_defines = {}  # Reset known defines for this file.
-
-    new_header = ""
-    dom = etree.fromstring(data)
-
-    devname = dom.find(".//devices/device").get("name")
-    arch = dom.find(".//devices/device").get("architecture").upper()
-
-    ##
-    # license/file header
-    ##
-
-    new_header += begin_block_comment()
-    new_header += commentblock_text(
-        AVRLIBC3_License.format(
-            GEN_IO_HEADER_ATDF_VERSION,
-            pack,
-            filename,
-            changelog[0][0],
-            changelog[0][1],
-            devname,
-            arch,
+    for value in data:
+        enum_str += "    {0:<{1}} = {2:<{3}}, /* {4} */\n".format(
+            value[0], padding[0], value[1], padding[1], value[2]
         )
-    )
+    return enum_str
 
-    new_header += commentblock_changelog(changelog)
 
-    new_header += commentblock_text()
-    new_header += commentblock_text(MicrochipLicense)
-
-    new_header += end_block_comment()
-
-    ##
-    # header sequence
-    ##
-
-    new_header += HEADER_BEGIN.format(devname)
-
-    new_header += section_heading("Ungrouped common register")
-
+def emit_UngroupedCommonRegisters(atdf):
     regs = []
+    maxoffset = 0
 
     for module in ["CPU", "GPIO"]:
-        module_instance = dom.find(
-            './/peripherals/module/instance/register-group[@name-in-module="{}"]'.format(
-                module
-            )
-        )
+        module_instance = atdf.getModuleInstanceRegisters(module)
         if module_instance is not None:
-            baseaddr = int(module_instance.get("offset"), 16)
+            baseaddr = xint(module_instance.get("offset"))
 
-            for register in dom.findall(
-                './/modules/module[@name="{0}"]/register-group[@name="{0}"]/register'.format(
-                    module
-                )
-            ):
-                offset = int(register.get("offset"), 16)
+            # First create an unsorted list of the registers.
+            for register in atdf.getModuleRegisters(module):
+                offset = xint(register.get("offset"))
+                if offset > maxoffset:
+                    maxoffset = offset
                 regs.append(
                     [
                         register.get("name"),
                         baseaddr + offset,
                         register.get("caption"),
-                        int(register.get("size")),
+                        xint(register.get("size")),
                     ]
                 )
 
+    offsetlen = len("{:X}".format(maxoffset))
+
     defines = []
     if regs is not None:
-        regs.sort(key=lambda reg: reg[1])
-
         nextreg = None
-        for reg in regs:
+        for reg in sorted(regs, key=lambda reg: reg[1]):
             if reg is not None:
                 if (nextreg is not None) and (nextreg != reg[1]):
                     # Put a line gap between discontiguous addresses.
                     defines.append(["", ""])
 
-                sfrmem = "_SFR_MEM8 " if reg[3] == 1 else "_SFR_MEM16"
+                if reg[3] == 1:
+                    sfrmem = "_SFR_MEM8 "
+                elif reg[3] == 2:
+                    sfrmem = "_SFR_MEM16"
+                elif reg[3] == 4:
+                    sfrmem = "_SFR_MEM32"
+                else:
+                    print("ERROR: Unknown size if SFR Register - {}".format(reg[3]))
+                    exit(-1)
+
                 defines.append(
-                    [reg[0], "{0}(0x{1:04X})".format(sfrmem, reg[1]), reg[2]]
+                    [
+                        reg[0],
+                        "{0}(0x{1:{2}X})".format(sfrmem, reg[1], offsetlen),
+                        reg[2],
+                    ]
                 )
                 nextreg = reg[1] + reg[3]
 
-    new_header += emit_defines(defines)
+    return emit_defines(defines)
 
-    new_header += "\n\n"
 
-    ##
-    # C header sequence
-    ##
-    new_header += section_heading("C LANGUAGE - ONLY", divider="~")
-    new_header += C_SECTION_BEGIN
+def enumerate_mask(mask):
+    # get all unique values defined by a bitmask. (as an array)
+    maskvals = {}
+    for val in range(mask + 1):
+        maskvals[val & mask] = 1
+    return sorted(maskvals.keys())
 
-    ##
-    # IO Module structures
-    ##
 
-    # To save work, we buffer the asm definitions, as we create C definitions.
-    asm_defs = []
+def emit_bitfields(atdf, module_name, group_name, bitfield):
+    c_section = ""
+    asm_section = ""
 
-    new_header += section_heading("IO Module Structures")
+    # We do this because there are comments in the atdf and they are picked up as bitfields.
+    if bitfield.tag != "bitfield":
+        return c_section, asm_section
 
+    reg_bitfields = len(bitfield.getparent().findall("bitfield"))
+
+    # Array of [Name, Value, comment] (idx = value as an integer, everything else is a string)
+    enumdata = []
+
+    bitfield_name = bitfield.get("name")
+    bitfield_caption = bitfield.get("caption")
+    if (bitfield_caption is None) or (len(bitfield_caption) == 0):
+        bitfield_caption = "{}-{}".format(
+            bitfield.getparent().get("caption"), bitfield.get("name")
+        )
+    # Emit Enums for field values
+    bitvalue = bitfield.get("values")
+    valgroup = None
+    if bitvalue is not None:
+        valgroup = atdf.getModuleRegisterValueGroup(module_name, bitvalue)
+
+    def add_constant(value, state_name, comment, comment_suffix=None):
+
+        cmtstr = "{}"
+        if comment_suffix is not None:
+            cmtstr += " - {}"
+
+        enumdata.append(
+            [
+                "{}_{}_{}_gc".format(group_name, bitfield_name, state_name),
+                value,
+                cmtstr.format(comment, comment_suffix),
+            ]
+        )
+
+    mask = xint(bitfield.get("mask"))
+    if valgroup is None:
+
+        # No Value group so invent enum for field from known data
+        bits = bin(mask).count("1")  # Number of set bits
+        reg = bitfield.getparent()
+        if reg.tag != "register":
+            reg = reg.getparent()
+        max_bits = xint(reg.get("size")) * 8
+        if bits == 1:
+            # Single bit field
+            add_constant("(0x00)", "CLEAR", bitfield_caption, "CLEAR")
+            add_constant("(0x{:02X})".format(mask), "SET", bitfield_caption, "SET")
+        elif (bits != max_bits) and (reg_bitfields > 1):
+            # Multi bit field that does not occupy whole register
+            shift = int(math.log2(mask & -mask))  # Get first set bit in mask.
+            fval = "(x & 0x{0:02X})"
+            if shift != 0:
+                fval = "((x<<{1}) & 0x{0:02X})"
+
+            numval_field = "\n/* {} */\n#define {}_{}_{}_gc(x) {}\n".format(
+                bitfield_caption,
+                group_name,
+                reg.get("name"),
+                bitfield_name,
+                fval.format(mask, shift),
+            )
+            c_section += numval_field
+            asm_section += numval_field
+    else:
+        shift = int(math.log2(mask & -mask))  # Get first set bit in mask.
+        fval = "(0x{:02X})"
+        if shift != 0:
+            fval = "(0x{:02X}<<{})"
+
+        for value in valgroup:
+            add_constant(
+                fval.format(xint(value.get("value")), shift),
+                value.get("name"),
+                value.get("caption"),
+            )
+
+    if len(enumdata) > 0:
+        c_section += "\n/* {} */\n".format(bitfield_caption)
+        c_section += "typedef enum {}_{}_enum\n{{\n".format(group_name, bitfield_name)
+        c_section += emit_enum(enumdata)
+        c_section += "}} {}_{}_t;\n".format(group_name, bitfield_name)
+
+        asm_section += "\n/* {} */\n".format(bitfield_caption)
+        asm_section += emit_defines(enumdata)
+        asm_section += "\n"
+
+    return c_section, asm_section
+
+
+def emit_IOModuleStructures(atdf):
     # iterate all <module>
-    for module in dom.findall(".//modules/module"):
-        groups = module.findall(".//register-group")
+    c_section = ""
+    asm_section = ""
 
-        # skip blank module
-        if len(groups) == 0:
-            continue
+    unions = []
 
-        # skip GPIO HEADER
-        if module.get("name") not in ["GPIO"]:
-            new_header += section_heading(
+    for module in atdf.getAllModules():
+        module_name = module.get("name")
+
+        # First we emit the register structures of the Module
+        # And save any union information we come across for separate processing.
+        for register_group in atdf.getAllModuleRegisterGroups(module_name):
+
+            c_section += "\n"
+            c_section += section_heading(
                 "{} - {}".format(module.get("name"), module.get("caption")), divider="-"
             )
 
-        masks = {}
-        # iterate all <register-group>
-        for register_group in groups:
-
-            # description
-            if module.get("name") not in ["CPU", "GPIO"]:
-                group_caption = register_group.get("caption")
-                new_header += "/* {} */\n".format(group_caption)
-                asm_defs.append(["", "", group_caption])
-
-            # case when union-tag
-            if register_group.get("union-tag"):
-                new_header += "typedef union {}_union {{\n".format(
-                    register_group.get("name")
-                )
-                regs = []
-                type_size = 0
-                name_size = 0
-                desc_size = 0
-
-                # First we collect the register information and work out field sizes.
-                for subregister_group in register_group:
-                    rtype = subregister_group.get("name-in-module") + "_t"
-                    type_size = chk_size(rtype, type_size)
-                    name = subregister_group.get("name") + ";"
-                    name_size = chk_size(name, name_size)
-                    desc = "{0} - {1} Mode".format(
-                        register_group.get("caption"),
-                        subregister_group.get("name").title(),
-                    )
-                    desc_size = chk_size(desc, desc_size)
-
-                    regs.append([rtype, name, desc])
-
-                # Then we emit the register information:
-                for subreg in regs:
-                    new_header += "    {0:<{1}} {2:<{3}}  /* {4:<{5}} */\n".format(
-                        subreg[0], type_size, subreg[1], name_size, subreg[2], desc_size
-                    )
-                new_header += "}} {}_t;\n\n".format(register_group.get("name"))
-
-                continue
-
-            regs = {}
-            max_offset = 0
-
-            # sort registers by offset
-            for register in register_group.findall("./register"):
-
-                # Shift offset to true base address, if need be.
-                offset = xint(register.get("offset"))
-
-                if offset > max_offset:
-                    max_offset = offset
-                regs[offset] = register
-
-                # mask of each bitfield
-                for bitfield in register.findall(".//bitfield"):
-                    if bitfield.get("values"):
-                        masks[bitfield.get("values")] = int(bitfield.get("mask"), 16)
-
-            if module.get("name") not in ["CPU", "GPIO"]:
-                new_header += "typedef struct {}_struct\n{{\n".format(
-                    register_group.get("name")
-                )
-
-                offset = 0
-                reglist = []
-                maxreg_size = 0
-                while offset <= max_offset:
-
-                    if offset in regs:
-                        regsize = xint(regs[offset].get("size"))
-
-                        caption = regs[offset].get("caption")
-                        if (caption is None) or (len(caption) == 0):
-                            caption = group_caption
-                        caption = "/* {} */".format(caption)
-                        name = regs[offset].get("name")
-
-                        if regsize == 1:
-                            reg_entry = "    register8_t {}; ".format(name)
-                        elif regsize == 2:
-                            reg_entry = "    _REGISTER16({}); ".format(name)
-                        elif regsize == 4:
-                            reg_entry = "    _REGISTER32({}); ".format(name)
-                        else:
-                            print("ERROR: unknown register size={}".format(regsize))
-                            sys.exit(-1)
-
-                        offset += regsize
-                    else:
-                        # fill reserved.  Count number of contiguous reserved registers.
-                        rsv_cnt = 1
-                        while ((offset + rsv_cnt) < max_offset) and (
-                            (offset + rsv_cnt) not in regs
-                        ):
-                            rsv_cnt += 1
-
-                        if rsv_cnt == 1:
-                            reg_entry = "    register8_t rsv_0x{:02X};".format(offset)
-                            caption = ""
-                        else:
-                            reg_entry = "    register8_t rsv_0x{:02X}[{}];".format(
-                                offset, rsv_cnt
-                            )
-                            caption = ""
-                        offset += rsv_cnt
-                    reglist.append([reg_entry, caption])
-                    if len(reg_entry) > maxreg_size:
-                        maxreg_size = len(reg_entry)
-
-                # Render register field list
-                for reg in reglist:
-                    new_header += "{0:<{1}}{2}\n".format(reg[0], maxreg_size, reg[1])
-
-                new_header += "}} {}_t;\n\n".format(register_group.get("name"))
-
-            if module.get("name") == "FUSE":
-                new_header += "/* avr-libc typedef for avr/fuse.h */\n"
-                new_header += "typedef FUSE_t NVM_FUSES_t;\n\n"
-
-        vals = {}
-        # sort value-group
-        for value_group in module.findall(".//value-group"):
-            name = value_group.get("name")
-            name = name.replace("_DEFAULT", "")
-            name = name.replace("_NORMAL", "")
-            vals[name] = value_group
-
-        for val in sorted(vals.keys()):
-            value_group = vals[val]
-
-            name = value_group.get("name")
-            name = name.replace("_DEFAULT", "")
-            name = name.replace("_NORMAL", "")
-            name = name.replace("CPU_", "")
-            name = name.replace("FUSE_", "")
-            name = name.replace("LOCKBIT_", "")
-
-            new_header += "/* {} */\ntypedef enum {}_enum\n{{\n".format(
-                value_group.get("caption"), name
+            asm_section += "\n"
+            asm_section += section_heading(
+                "{} - {}".format(module.get("name"), module.get("caption")), divider="-"
             )
 
-            if value_group.get("name") in masks:
-                # position of first bit given bitfield mask
-                mask = "{}".format(bin(masks[value_group.get("name")]))
+            if register_group.get("class") == "union":
+                unions.append(register_group)
+            else:
+                group_name = register_group.get("name")
 
-                firstbit = mask[::-1].index("1")
+                regs = []
+                last_offset = -1
+                for reg in atdf.getAllRegisters(module_name, group_name):
+                    rsv_cnt = reg[1] - (last_offset + 1)
 
-                values = []
-                vn_size = 0
-                vd_size = 0
-                group_enums = []
-                for value in value_group:
-                    value_name = "{0}_{1}_gc".format(name, value.get("name"))
-                    if len(value_name) > vn_size:
-                        vn_size = len(value_name)
-
-                    if firstbit != 0:
-                        fstring = "(0x{0:02X}<<{1})"
-                    else:
-                        fstring = "(0x{0:02X})"
-                    value_data = fstring.format(xint(value.get("value")), firstbit)
-                    if len(value_data) > vd_size:
-                        vd_size = len(value_data)
-
-                    comment = format(value.get("caption"))
-
-                    values.append([value_name, value_data, comment])
-
-                for value in values:
-                    if value[0] not in group_enums:
-                        new_header += "    {0:<{1}} = {2:<{3}}, /* {4} */\n".format(
-                            value[0], vn_size, value[1], vd_size, value[2]
+                    if rsv_cnt == 1:
+                        regs.append(
+                            [
+                                "register8_t",  # Type
+                                "rsv_0x{:02X};".format(last_offset + 1),  # name
+                                "RESERVED REGISTER",  # comment
+                            ]
                         )
-                        group_enums.append(value[0])
+                    elif rsv_cnt != 0:
+                        regs.append(
+                            [
+                                "register8_t",  # Type
+                                "rsv_0x{:02X}[{}];".format(
+                                    last_offset + 1, rsv_cnt
+                                ),  # name
+                                "RESERVED REGISTER BLOCK",  # comment
+                            ]
+                        )
+                    last_offset = reg[1]
+
+                    if reg[2] == 1:
+                        reg_type = "register8_t"
+                        reg_name = "{};".format(reg[0])
+                    elif reg[2] == 2:
+                        reg_type = "_REGISTER16"
+                        reg_name = "({});".format(reg[0])
+                    elif reg[2] == 4:
+                        reg_type = "_REGISTER32"
+                        reg_name = "({});".format(reg[0])
                     else:
-                        new_header += "    /* WARNING Attempt to redefine {0} as {1} */\n".format(
-                            value[0], value[1]
+                        print("ERROR: unknown register size={}".format(reg[2]))
+                        sys.exit(-1)
+
+                    regs.append([reg_type, reg_name, reg[3]])  # Type  # name  # comment
+
+                if len(regs) > 0:
+                    padding = sizeFields(regs)
+
+                    # Emit Structure of registers
+                    c_section += "typedef struct {}_struct\n{{\n".format(group_name)
+
+                    for reg in regs:
+                        fstr = "    {0:<{1}} {2:<{3}}\n"
+                        if len(reg[2]) > 0:
+                            fstr = fstr.rstrip() + " /* {4} */\n"
+
+                        c_section += fstr.format(
+                            reg[0], padding[0], reg[1], padding[1], reg[2]
                         )
 
-                    asm_defs.append(value)
+                    c_section += "}} {}_t;\n\n".format(group_name)
 
-                new_header += "}} {}_t;\n\n".format(name)
-                asm_defs.append(["", ""])  # Line break in asm defs
-                asm_defs.append(["", ""])  # Line break in asm defs
+        # THEN, we emit the saved unions, if any.
+        for union in unions:
+            """ 
+            <register-group caption="16-bit Timer/Counter Type A" class="union" name="TCA" size="0x40" union-tag="TCA.SINGLE.CTRLD.SPLITM">
+                <register-group name="SINGLE" name-in-module="TCA_SINGLE" offset="0" union-tag-value="0"/>
+                <register-group name="SPLIT" name-in-module="TCA_SPLIT" offset="0" union-tag-value="1"/>
+            </register-group>
+            """
 
-        # avr-libc
-        # SLEEP aliases
-        if module.get("name") == "SLPCTRL":
-            for value in value_group:
-                slpdef = []
-                label = value.get("name")
-                label = label.replace("STDBY", "STANDBY")
-                label = label.replace("PDOWN", "PWR_DOWN")
-                define = [
-                    "SLEEP_MODE_{}".format(label),
-                    "(0x{:<02X}<<{})".format(xint(value.get("value")), firstbit),
-                ]
-                slpdef.append(define)
-                asm_defs.append(define)
+            # Text format the union information
+            regs = []
 
-                new_header += emit_defines(slpdef, "C")
-            new_header += "\n"
-            asm_defs.append(["", ""])  # Line break in asm defs
+            for reg in union:  # A union is a register-group we process specially
+                union_name = union.get("name")
+                regs.append(
+                    [
+                        "{}_t".format(reg.get("name-in-module")),
+                        "{};".format(reg.get("name")),
+                        "{0} = {1}".format(
+                            register_group.get("union-tag"), reg.get("union-tag-value")
+                        ),
+                    ]
+                )
 
-    ##
-    # IO module instances
-    ##
+            padding = sizeFields(regs)
 
-    new_header += section_heading("IO Module Instances. Mapped to memory.")
+            # Then we emit the register information:
+            caption = union.get("caption")
+            if len(caption) == 0:
+                print("ERROR: Missing Caption in UNION")
+                exit(-1)
 
+            c_section += "/* {} */\n".format(caption)
+
+            c_section += "typedef union {}_union {{\n".format(union_name)
+
+            for subreg in regs:
+                c_section += "    {0:<{1}} {2:<{3}} /* {4} */\n".format(
+                    subreg[0], padding[0], subreg[1], padding[1], subreg[2]
+                )
+
+            c_section += "}} {}_t;\n\n".format(union_name)
+
+        # NOW we emit the enums which define the fields we can use in the registers.
+        # And generate matching #defines for use when we use assembler.
+        for reggroup in atdf.getAllModuleRegisterGroups(module_name):
+            group_name = reggroup.get("name")
+            for reg in reggroup:
+
+                def process_bitfield(mode_name, bitfields):
+                    nonlocal c_section
+                    nonlocal asm_section
+
+                    for bitfield in bitfields:
+                        new_c_section, new_asm_section = emit_bitfields(
+                            atdf, module_name, mode_name, bitfield
+                        )
+                        if len(new_c_section) > 0:
+                            c_section += new_c_section
+                            asm_section += new_asm_section
+
+                if reg.find("./mode") != None:
+                    for mode in reg:
+                        mode_name = "{}_{}".format(group_name, mode.get("name"))
+                        process_bitfield(mode_name, mode)
+                else:
+                    process_bitfield(group_name, reg)
+
+    return c_section, asm_section
+
+
+def emit_IOModuleInstances(atdf):
     regs = []
-    for module in dom.findall(".//peripherals/module"):
-
-        if module.get("name") in ["CPU", "GPIO"]:
-            continue
-
-        # order all by offset - Because multiple modules may have the same offset,
-        # order by sorting, NOT exclusively.
+    defines = []
+    for module in atdf.getAllPeripheralModules():
+        # order all by offset
         for register in module.findall(".//register-group"):
-            offset = xint(register.get("offset"))
-            regs.append([offset, register])
+            regs.append([xint(register.get("offset")), register])
 
-    tsize = 0
-    reglist = []
-    # Sorting by the offset.
     for reg in sorted(regs, key=lambda reg: reg[0]):
         module_name = reg[1].get("name-in-module")
 
-        module = dom.find('modules/module[@name="%s"]' % module_name)
-        # Sometimes there is no module, so skip if thats the case.
-        if module is not None:
-            typestr = "*({}_t *)".format(module_name)
-            tsize = chk_size(typestr, tsize)
+        module = atdf.getModuleRegisterGroup(module_name)
+        module_comment = module.get("caption")
+        defines.append(
+            [
+                reg[1].get("name"),
+                "(*({}_t *) 0x{:04X})".format(module_name, reg[0]),
+                module_comment,
+            ]
+        )
 
-            name = reg[1].get("name")
-            value = "({:<{}} 0x{:04X})".format(typestr, tsize, reg[0])
+    return emit_defines(defines)
 
-            reglist.append([name, value, module.get("caption")])
 
-    new_header += emit_defines(reglist, "C")
-
-    new_header += ASM_SECTION_BEGIN
-    new_header += section_heading("ASM LANGUAGE - ONLY", divider="~")
-    new_header += emit_defines(asm_defs, "ASM")
-
-    new_header += C_ASM_SECTION_END
-    new_header += section_heading("C/ASM COMMON DEFINITIONS", divider="~")
+def emit_IORegisterNames(atdf):
+    def fmtAddress(address, size, width):
+        return "_SFR_MEM{:<2}(0x{:0{}X})".format(size * 8, address, width)
 
     ##
-    # IO register names
+    ## IO register names
     ##
-
-    new_header += section_heading("Flattened fully qualified IO register names")
-
-    regs = []
-    for module in dom.findall(".//peripherals/module"):
-
+    new_header = ""
+    reg_group = []
+    for module in atdf.getAllPeripheralModules():
         # order all by offset
-        # order all by offset - Because multiple modules may have the same offset,
-        # order by sorting, NOT exclusively.
         for register in module.findall(".//register-group"):
-            offset = xint(register.get("offset"))
-            regs.append([offset, register])
+            reg_group.append([xint(register.get("offset")), register])
 
-    for reg in sorted(regs, key=lambda reg: reg[0]):
+    group_cnt = 0
+    regs = []
+    max_reg = 0
 
-        module = dom.find(
-            './/modules/module[@name="{}"]'.format(reg[1].get("name-in-module"))
-        )
+    for group in sorted(reg_group, key=lambda reg_group: reg_group[0]):
+        module_name = group[1].get("name-in-module")
+        group_offset = xint(group[1].get("offset"))
+        periph_instance = group[1].getparent()
+        periph_instance_name = periph_instance.get("name")
+        periph_module = periph_instance.getparent()
+        periph_module_name = periph_module.get("name")
 
-        if module is None:
-            continue
+        # None Unions have one register group, identified by their name
+        reg_groups = [module_name]
+        union = atdf.getModuleUnion(module_name)
+        if union is not None:
+            for reg in atdf.getModuleUnion(module_name):
+                reg_groups.append(reg.get("name-in-module"))
 
-        # check label usage
-        instlabel = dom.find(
-            '*.//peripherals/module/instance/[@name="{}"]'.format(reg[1].get("name"))
-        )
-        mainlabel = instlabel.getparent()
+        for group_name in reg_groups:
+            for reg in atdf.getModuleRegisters(periph_module.get("name"), group_name):
+                # Get Module Reg Group Caption
+                group_caption = reg.getparent().get("caption")
 
-        if instlabel.get("name") == mainlabel.get("name"):
-            instance_label = "/* {0} - {2} */\n"
-        else:
-            instance_label = "/* {0} ({1}) - {2} */\n"
+                if group_caption is None:  # No Module Reg Group Caption
+                    # Get Module Caption
+                    group_caption = reg.getparent().getparent().get("caption")
 
-        new_header += instance_label.format(
-            reg[1].get("name-in-module"), reg[1].get("name"), module.get("caption")
-        )
+                if group_caption is None:  # No Instance Caption
+                    group_caption = group[1].get("caption")
 
-        unions = {}
-        # aquire unions and members
-        for register_group in module.findall("register-group/register-group"):
-            if register_group.get("union-tag-value"):
-                unions[register_group.get("name-in-module")] = register_group
-
-        # aquire register groups
-        for register_group in module.findall("register-group"):
-
-            # skip special unions
-            if register_group.get("union-tag"):
-                continue
-
-            # order by offset key
-            entries = {}
-            for register in register_group.findall(".//register"):
-
-                idx = xint(register.get("offset"))
-                entries[idx] = register
-
-            name = reg[1].get("name")
-
-            # if union append a marker
-            if register_group.get("name") in unions:
-                name += "_" + unions[register_group.get("name")].get("name")
-
-            defines = []
-
-            def add_define(name, size, value):
-                nonlocal defines
-
-                defvalue = "_SFR_MEM{0:<2}(0x{1:04X})".format(size, value)
-                defines.append([name, defvalue])
-
-            for entry in sorted(entries.keys()):
-
-                reg_address = xint(reg[1].get("offset")) + xint(
-                    entries[entry].get("offset")
-                )
-                reg_size = xint(entries[entry].get("size"))
-                defname = "{}_{}".format(name, entries[entry].get("name"))
-
-                add_define(defname, reg_size * 8, reg_address)
-
-                defname = "{}_{}".format(reg[1].get("name"), entries[entry].get("name"))
-                if (xint(entries[entry].get("size")) == 2) and (
-                    register_group.get("name") not in unions
-                ):
-                    add_define(defname + "L", 8, reg_address)
-                    add_define(defname + "H", 8, reg_address + 1)
-
-                if (xint(entries[entry].get("size")) == 4) and (
-                    register_group.get("name") not in unions
-                ):
-                    add_define(defname + "0", 8, reg_address)
-                    add_define(defname + "1", 8, reg_address + 1)
-                    add_define(defname + "2", 8, reg_address + 2)
-                    add_define(defname + "3", 8, reg_address + 3)
-
-            new_header += emit_defines(defines)
-
-        new_header += "\n\n"
-
-    ##
-    # Bitfield definitions
-    ##
-
-    new_header += section_heading("Bitfield Definitions")
-
-    defined = {}
-    for module in dom.findall("modules/module"):
-
-        # skip module with no bitfields
-        if len(module.findall("register-group/register/bitfield")) == 0:
-            continue
-
-        new_header += "/* {} - {} */\n".format(
-            module.get("name"), module.get("caption")
-        )
-
-        # aquire register groups
-        for register_group in module.findall("register-group"):
-
-            # skip special unions
-            if register_group.get("union-tag"):
-                continue
-
-            regs = {}
-            for register in register_group.findall("register"):
-                regs[xint(register.get("offset"))] = register
-
-            for register in sorted(regs.keys()):
-
-                bitfields = regs[register].findall(".//bitfield")
-                if not bitfields:
-                    continue
-
-                new_header += "/* {}.{}  bit masks and bit positions */\n".format(
-                    register_group.get("name"), regs[register].get("name")
-                )
-
-                bits = []
-                for bitfield in bitfields:
-                    bits.append([xint(bitfield.get("mask")), bitfield])
-
-                # sort list by mask
-                bits.sort(key=lambda tup: tup[0])
-
-                defines = []
-                for bitfield in bits:
-
-                    # compute bit slices
-                    mask = "%s" % bin(bitfield[0])
-                    firstbit = mask[::-1].index("1")
-                    bitspans = mask.count("1")
-
-                    caption = bitfield[1].get("caption")
-                    name = "{}_{}_{}".format(
-                        register_group.get("name"),
-                        regs[register].get("name"),
-                        bitfield[1].get("name"),
+                if group_name.startswith(periph_module_name):
+                    base_name = group_name.replace(
+                        periph_module_name, periph_instance_name, 1
                     )
+                else:
+                    base_name = periph_module_name
+                reg_name = "{}_{}".format(base_name, reg.get("name"))
 
-                    if name in defined:
-                        defines.append(["", "", "{} is already defined.".format(name)])
-                    #    continue
+                reg_offset = xint(reg.get("offset"))
 
-                    defined[name] = True
+                regs.append(
+                    [
+                        group_cnt,
+                        group_offset,
+                        reg_offset,
+                        xint(reg.get("size")),
+                        periph_instance_name,
+                        base_name,
+                        reg_name,
+                        group_caption,
+                        reg.get("caption"),
+                    ]
+                )
+                if (group_offset + reg_offset) > max_reg:
+                    max_reg = reg_offset
+            group_cnt += 1
 
-                    if bitspans == 1:
-                        defines.append(
-                            [
-                                "{}_bm".format(name),
-                                "(0x{:02X})".format(bitfield[0]),
-                                "{} bit mask.".format(caption),
-                            ]
-                        )
-                        defines.append(
-                            [
-                                "{}_bp".format(name),
-                                "({})".format(firstbit),
-                                "{} bit position.".format(caption),
-                            ]
-                        )
-                    else:
-                        defines.append(
-                            [
-                                "{}_gm".format(name),
-                                "(0x{:02X})".format(bitfield[0]),
-                                "{} group mask.".format(caption),
-                            ]
-                        )
-                        defines.append(
-                            [
-                                "{}_gp".format(name),
-                                "({})".format(firstbit),
-                                "{} group position.".format(caption),
-                            ]
-                        )
+    defines = []
+    prev_group_comment = ""
+    if max_reg >= 0xFF:
+        reg_addr_size = 2
+    else:
+        reg_addr_size = 4
 
-                        for b in range(bitspans):
-                            defines.append(
-                                [
-                                    "{}{}_bm".format(name, b),
-                                    "(1<<{})".format(firstbit + b),
-                                    "{} bit {} mask.".format(caption, b),
-                                ]
-                            )
-                            defines.append(
-                                [
-                                    "{}{}_bp".format(name, b),
-                                    "({})".format(firstbit + b),
-                                    "{} bit {} position.".format(caption, b),
-                                ]
-                            )
+    for reg in sorted(regs, key=lambda reg: (reg[0] * 0x1000000) + reg[1] + reg[2]):
+        group_comment = "{} - {} (0x{:0{}X})".format(
+            reg[4], reg[7], reg[1], reg_addr_size
+        )
+        if group_comment != prev_group_comment:
+            defines.append(["", "", ""])
+            defines.append(["", "", group_comment])
+            defines.append(
+                [
+                    "{}_BASE".format(reg[5]),
+                    fmtAddress(reg[1], reg[3], reg_addr_size),
+                    "{} Base Address".format(reg[5]),
+                ]
+            )
+            prev_group_comment = group_comment
+        defines.append(
+            [reg[6], fmtAddress(reg[1] + reg[2], reg[3], reg_addr_size), reg[8]]
+        )
 
-                new_header += emit_defines(defines) + "\n"
+        if reg[3] == 2:
+            defines.append(
+                [
+                    reg[6] + "L",
+                    fmtAddress(reg[1] + reg[2], 1, reg_addr_size),
+                    "{} LOW BYTE".format(reg[8]),
+                ]
+            )
+            defines.append(
+                [
+                    reg[6] + "H",
+                    fmtAddress(reg[1] + reg[2] + 1, 1, reg_addr_size),
+                    "{} HIGH BYTE".format(reg[8]),
+                ]
+            )
+        elif reg[3] == 4:
+            defines.append(
+                [
+                    reg[6] + "L",
+                    fmtAddress(reg[1] + reg[2], 2, reg_addr_size),
+                    "{} LOW WORD".format(reg[8]),
+                ]
+            )
+            defines.append(
+                [
+                    reg[6] + "0",
+                    fmtAddress(reg[1] + reg[2], 1, reg_addr_size),
+                    "{} LOW BYTE".format(reg[8]),
+                ]
+            )
+            defines.append(
+                [
+                    reg[6] + "1",
+                    fmtAddress(reg[1] + reg[2] + 1, 1, reg_addr_size),
+                    "{} 2nd BYTE".format(reg[8]),
+                ]
+            )
+            defines.append(
+                [
+                    reg[6] + "H",
+                    fmtAddress(reg[1] + reg[2] + 2, 2, reg_addr_size),
+                    "{} HIGH WORD".format(reg[8]),
+                ]
+            )
+            defines.append(
+                [
+                    reg[6] + "2",
+                    fmtAddress(reg[1] + reg[2] + 2, 1, reg_addr_size),
+                    "{} 3rd BYTE".format(reg[8]),
+                ]
+            )
+            defines.append(
+                [
+                    reg[6] + "3",
+                    fmtAddress(reg[1] + reg[2] + 3, 1, reg_addr_size),
+                    "{} HIGH BYTE".format(reg[8]),
+                ]
+            )
 
-    # avr-libc aliases - TODO: Move to upper level header
-    new_header += """// Generic Port Pins"
+    new_header += emit_defines(defines)
 
-#define PIN0_bm 0x01
-#define PIN0_bp 0
-#define PIN1_bm 0x02
-#define PIN1_bp 1
-#define PIN2_bm 0x04
-#define PIN2_bp 2
-#define PIN3_bm 0x08
-#define PIN3_bp 3
-#define PIN4_bm 0x10
-#define PIN4_bp 4
-#define PIN5_bm 0x20
-#define PIN5_bp 5
-#define PIN6_bm 0x40
-#define PIN6_bp 6
-#define PIN7_bm 0x80
-#define PIN7_bp 7
+    return new_header
 
-"""
 
+def emit_aliases(atdf):
+
+    c_section = ""
+
+    # AVR-LIBC3 Alias
+    # FUSE aliases
+    c_section += "/* avr-libc typedef for avr/fuse.h */\n"
+    c_section += "typedef FUSE_t NVM_FUSES_t;\n\n"
+
+    return c_section
+
+
+def emit_interrupt_vectors(atdf):
+    new_header = ""
     ##
     # Interrupt vectors
     ##
     new_header += section_heading("Interrupt Vector Definitions")
     new_header += "/* Vector 0 is the reset vector */\n"
 
-    idvector = 0
-    prevname = ""
     defines = []
-    # TODO: Process interrupt groups,
     # Make an list of all interrupts, both directly defined and in groups.
     # then emit the vector table by sorting by absolute offset.
-    for interrupt in dom.findall(".//interrupts/interrupt"):
+    for interrupt in atdf.getAllInterrupts():
+        if interrupt[2] is None:
+            # Section Label
+            defines.append(["", "", None])
+            defines.append(["", "", interrupt[3]])
+        else:
+            defines.append(
+                ["{}_num".format(interrupt[2]), "({})".format(interrupt[0]), ""]
+            )
+            defines.append(
+                [interrupt[2], "_VECTOR({})".format(interrupt[0]), interrupt[3]]
+            )
 
-        name = interrupt.get("module-instance")
-        idvector = int(interrupt.get("index"))
-
-        if name is not None:
-            if prevname != name:
-                defines.append(["", "", "{} interrupt vectors".format(name)])
-                prevname = name
-
-        comment = interrupt.get("caption")
-
-        instance = interrupt.get("module-instance")
-        name = interrupt.get("name")
-        if name is None:
-            name = interrupt.get("name-in-module")  # Three cheers for Inconsistency :(
-
-        vect_name = "{}_vect".format(name)
-
-        if instance is not None:
-            vect_name = "{}_{}".format(instance, vect_name)
-
-        defines.append(["{}_num".format(vect_name), "({})".format(idvector), ""])
-        defines.append([vect_name, "_VECTOR({})".format(idvector), comment])
-
-    pgmsize = xint(
-        dom.find(".//address-spaces/address-space/[@name='prog'][@id='prog']").get(
-            "size"
-        )
-    )
-
-    vectorsize = 0x02
-    if pgmsize > 8196:
-        vectorsize = 0x04
+    vectorsize = atdf.getVectorSize()
 
     defines.append(["", ""])
+    defines.append(["", "", "Vector Table Size"])
     defines.append(
         ["_VECTOR_SIZE", "({})".format(vectorsize), "Size of individual vector."]
     )
     defines.append(
         [
             "_VECTORS_SIZE",
-            "({} * _VECTOR_SIZE)".format(idvector + 1),
+            "({} * _VECTOR_SIZE)".format(interrupt[0] + 1),
             "Size of all vectors",
         ]
     )
-    defines.append(["", ""])
 
     new_header += emit_defines(defines)
+    return new_header
 
+
+def emit_constants(atdf):
     ##
     # Constants
     ##
+    new_header = ""
 
     new_header += section_heading("Constants")
 
-    for addrspace in dom.findall(".//address-spaces/address-space"):
+    for addrspace in atdf.getAddressSpaces():
 
         space = addrspace.get("id").upper()
 
@@ -1074,31 +1240,189 @@ def process_atdf(data, pack, filename, changelog):
                     defines.append(["", ""])  # Causes a newline on emission
 
         new_header += emit_defines(defines)
+    return new_header
 
-    # avr-libc aliases
-    # TODO: Move these aliases into global definitions, instead of every generated file.
+
+def emit_portpins(atdf):
+    ##
+    # IO Ports - Consistent Definitions that can be used by portpins.h
+    # YAY Consistency, there at seemingly AT LEAST 3 different ways port pins are defined,
+    # so we need to try them all in order of preference.
+    ##
+    new_header = ""
+
     defines = []
-    defines.append(["FLASHSTART", "PROGMEM_START"])
-    defines.append(["FLASHEND", "PROGMEM_END"])
-    defines.append(["RAMSTART", "INTERNAL_SRAM_START"])
-    defines.append(["RAMSIZE", "INTERNAL_SRAM_SIZE"])
-    defines.append(["RAMEND", "INTERNAL_SRAM_END"])
-    defines.append(["E2END", "EEPROM_END"])
-    defines.append(["E2PAGESIZE", "EEPROM_PAGE_SIZE"])
+    defines.append(["", "", "============ Port Bits ============"])
+    defines.append(["", ""])
+
+    """ 
+    <peripherals>
+        <module name="PORT">
+            <instance name="PORTB" caption="I/O Port">
+                <register-group name="PORTB" name-in-module="PORTB" offset="0x00" address-space="data" caption="I/O Port"/>
+                <signals>
+                    <signal group="P" function="default" pad="PB0" index="0"/>
+                    <signal group="P" function="default" pad="PB1" index="1"/>
+                    <signal group="P" function="default" pad="PB2" index="2"/>
+                    <signal group="P" function="default" pad="PB3" index="3"/>
+                </signals>
+            </instance>
+        </module>
+    
+    <peripherals>
+        <module id="I2103" name="PORT">
+            <instance name="PORTA">
+                <register-group address-space="data" name="PORTA" name-in-module="PORT" offset="0x0400"/>
+                <signals>
+                    <signal function="IOPORT" group="PIN" index="0" pad="PA0"/>
+                    <signal function="IOPORT" group="PIN" index="1" pad="PA1"/>
+                    <signal function="IOPORT" group="PIN" index="2" pad="PA2"/>
+                    <signal function="IOPORT" group="PIN" index="3" pad="PA3"/>
+                    <signal function="IOPORT" group="PIN" index="4" pad="PA4"/>
+                    <signal function="IOPORT" group="PIN" index="5" pad="PA5"/>
+                    <signal function="IOPORT" group="PIN" index="6" pad="PA6"/>
+                    <signal function="IOPORT" group="PIN" index="7" pad="PA7"/>
+                </signals>
+            </instance>
+    """
+
+    portpins = 0
+    module = atdf.getPeripheralModule("PORT")
+    if module is not None:
+        last_portname = "PXX"
+
+        # aquire signal groups
+        for signal_group in module.findall(".//instance/signals/signal"):
+            portname = signal_group.get("pad")
+            portindex = signal_group.get("index")
+            # Line break between different ports.
+            if last_portname[:-1] != portname[:-1]:
+                defines.append(["", ""])
+            if (portname is not None) and (portindex is not None):
+                defines.append([portname, "({})".format(portindex)])
+                portpins += 1
+            last_portname = portname
+
+    if portpins == 0:
+        # No Portpins found with primary method.  Fallback to looking at the module.
+        """
+        <modules>
+            <module caption="I/O Port" name="PORT">
+                <register-group caption="I/O Port" name="PORTB">
+                    <register caption="Data Register, Port B" name="PORTB" offset="0x18" size="1" mask="0x1F"/>
+                    <register caption="Data Direction Register, Port B" name="DDRB" offset="0x17" size="1" mask="0x1F"/>
+                    <register caption="Input Pins, Port B" name="PINB" offset="0x16" size="1" mask="0x3F"/>
+                </register-group>
+            </module>       
+        </modules>
+
+        OR
+
+        <modules>
+            <module caption="" name="PORTA">
+                <register-group caption="" name="PORTA">
+                    <register caption="Port A Data Register" name="PORTA" offset="0x22" size="1" mask="0xFF"/>
+                    <register caption="Port A Data Direction Register" name="DDRA" offset="0x21" size="1" mask="0xFF"/>
+                    <register caption="Port A Input Pins" name="PINA" offset="0x20" size="1" mask="0xFF"/>
+                </register-group>
+            </module>
+            <module caption="" name="PORTB">
+                <register-group caption="" name="PORTB">
+                    <register caption="Port B Data Register" name="PORTB" offset="0x25" size="1" mask="0xFF"/>
+                    <register caption="Port B Data Direction Register" name="DDRB" offset="0x24" size="1" mask="0xFF"/>
+                    <register caption="Port B Input Pins" name="PINB" offset="0x23" size="1" mask="0xFF" ocd-rw="R"/>
+                </register-group>
+            </module>
+        </modules>=
+        """
+        for modulename in atdf.getAllModuleNames():
+            if modulename.startswith("PORT"):
+                for register_group in atdf.getAllModuleRegisterGroups(modulename):
+                    portname = register_group.get("name")
+                    for reg in register_group.findall(
+                        './/register[@name="{}"]'.format(portname)
+                    ):
+                        mask = reg.get("mask")
+                        if mask is not None:
+                            bits = xint(mask)
+                        else:
+                            # Check if we have bitfields, and then OR them together to get a mask.
+                            bits = 0
+                            for bitfield in reg:
+                                mask = bitfield.get("mask")
+                                if mask is not None:
+                                    bits = bits | xint(mask)
+
+                        bitcount = 0
+                        while bits > 0:
+                            if (bits | 0x1) != 0:
+                                defines.append(
+                                    [
+                                        "{}{}".format(portname, bitcount),
+                                        "({})".format(bitcount),
+                                    ]
+                                )
+                                portpins += 1
+                            bits >>= 1
+                            bitcount += 1
+
+    if portpins == 0:
+        # Third fallback - Just look for ports defined, and assume all 8 bits are present.
+        """
+        <peripherals>
+            <module name="PORT" id="I6075" version="XMEGAAU">
+                <instance name="PORTA">
+                    <register-group address-space="data" offset="0x0600" name-in-module="PORT" name="PORTA"/>
+                </instance>
+                <instance name="PORTB">
+                    <register-group address-space="data" offset="0x0620" name-in-module="PORT" name="PORTB"/>
+                </instance>
+                <instance name="PORTC">
+                    <register-group address-space="data" offset="0x0640" name-in-module="PORT" name="PORTC"/>
+                </instance>
+                <instance name="PORTD">
+                    <register-group address-space="data" offset="0x0660" name-in-module="PORT" name="PORTD"/>
+                </instance>
+                <instance name="PORTE">
+                    <register-group address-space="data" offset="0x0680" name-in-module="PORT" name="PORTE"/>
+                </instance>
+                <instance name="PORTF">
+                    <register-group address-space="data" offset="0x06A0" name-in-module="PORT" name="PORTF"/>
+                </instance>
+                <instance name="PORTR">
+                    <register-group address-space="data" offset="0x07E0" name-in-module="PORT" name="PORTR"/>
+                </instance>
+            </module>
+        </peripherals>
+        """
+        module = atdf.getPeripheralModule("PORT")
+        # aquire instances
+        for instance in module.findall(".//instance"):
+            portname = instance.get("name")
+
+            for bit in range(8):
+                defines.append(["{}{}".format(portname, bit), "({})".format(bit)])
+                portpins += 1
+
+    if portpins == 0:
+        print("ERROR: No Port Pins WTF")
+        exit()
+
     defines.append(["", ""])
 
     new_header += emit_defines(defines)
 
+    return new_header
+
+
+def emit_fuses(atdf):
     ##
     # Fuses
     ##
+    new_header = ""
+    defines = []
 
-    fusesize = int(
-        dom.find('.//address-spaces/address-space/memory-segment[@name="FUSES"]').get(
-            "size"
-        ),
-        16,
-    )
+    fusesize = xint(atdf.getMemorySegment("FUSES").get("size"))
 
     new_header += section_heading("Fuses/LockBits/Signatures")
 
@@ -1111,9 +1435,7 @@ def process_atdf(data, pack, filename, changelog):
     new_header += emit_defines(defines)
 
     fuses = {}
-    for register in dom.findall(
-        './/modules/module[@name="FUSE"]/register-group/register'
-    ):
+    for register in atdf.getModuleRegisters("FUSE"):
         # order by offset
         fuses[xint(register.get("offset"))] = register
 
@@ -1161,18 +1483,21 @@ def process_atdf(data, pack, filename, changelog):
 
         new_header += emit_defines(defines)
 
+    return new_header
+
+
+def emit_lockbits(atdf):
     ##
-    ## Lockbits & Signature
+    ## Lockbits
     ##
 
     defines = []
 
-    defines.append(["", "", "========== Lock Bits =========="])
     defines.append(["", ""])
+    defines.append(["", "", "========== Lock Bits =========="])
 
-    lockbits = dom.find(
-        './/devices/device/address-spaces/address-space/memory-segment[@type="lockbits"]'
-    )
+    lockbits = atdf.getMemorySegmentType("lockbits")
+
     if lockbits is None:
         defines.append(["", "", "__LOCK_BITS_DO_NOT_EXIST"])
     else:
@@ -1180,24 +1505,124 @@ def process_atdf(data, pack, filename, changelog):
 
     defines.append(["", ""])
 
-    defines.append(["", "", "========== Signature =========="])
+    return emit_defines(defines)
+
+
+def emit_signature(atdf):
+    defines = []
+
     defines.append(["", ""])
+    defines.append(["", "", "========== Signature =========="])
 
-    for signature in dom.findall(
-        './/property-groups/property-group[@name="SIGNATURES"]/property'
-    ):
-
+    for signature in atdf.getPropertyGroup("SIGNATURES"):
         name = signature.get("name")
         if name.startswith("SIGNATURE"):
             sid = name[9:]
 
             svalue = xint(signature.get("value"))
-            defines.append(["SIGNATURE_{}".format(sid), "({:02X})".format(svalue)])
+            defines.append(["SIGNATURE_{}".format(sid), "(0x{:02X})".format(svalue)])
 
-    new_header += emit_defines(defines)
+    return emit_defines(defines)
+
+
+def process_atdf(data, pack, filename, changelog):
+    # Process an .atdf XML file and generate a C/ASM header file.
+    # data : the textual data of the .atdf XML file.
+    # changelog : Changelog information to embed in the file header.
+    global all_defines
+    all_defines = {}  # Reset known defines for this file.
+
+    new_header = ""
+
+    atdf = AVR_ATDF_File(data)
+    devname = atdf.getDeviceName()
+    arch = atdf.getArchitecture()
+
+    ##
+    # license/file header
+    ##
+
+    new_header += begin_block_comment()
+    new_header += commentblock_text(
+        AVRLIBC3_License.format(
+            GEN_IO_HEADER_ATDF_VERSION,
+            pack,
+            filename,
+            changelog[0][0],
+            changelog[0][1],
+            devname,
+            arch,
+        )
+    )
+
+    new_header += commentblock_changelog(changelog)
+
+    new_header += commentblock_text()
+    new_header += commentblock_text(MicrochipLicense)
+
+    new_header += end_block_comment()
+
+    ##
+    # header sequence
+    ##
+    new_header += HEADER_BEGIN.format(devname)
+
+    ##
+    # Common Registers
+    ##
+    new_header += section_heading("Ungrouped common register")
+    new_header += emit_UngroupedCommonRegisters(atdf)
+    new_header += "\n\n"
+
+    ##
+    # C header sequence
+    ##
+    new_header += section_heading("C LANGUAGE - ONLY", divider="~")
+    new_header += C_SECTION_BEGIN
+
+    ##
+    # IO Module structures
+    ##
+
+    new_header += section_heading("IO Module Structures")
+
+    c_section, asm_section = emit_IOModuleStructures(atdf)
+
+    c_section += section_heading("IO Module Instances. Mapped to memory.")
+
+    c_section += emit_IOModuleInstances(atdf)
+
+    new_header += c_section
+
+    new_header += ASM_SECTION_BEGIN
+    new_header += section_heading("ASM LANGUAGE - ONLY", divider="~")
+    new_header += asm_section
+
+    new_header += C_ASM_SECTION_END
+    new_header += "\n"
+
+    new_header += section_heading("C/ASM COMMON DEFINITIONS", divider="~")
+
+    new_header += section_heading("Flattened fully qualified IO register names")
+
+    new_header += emit_IORegisterNames(atdf)
+
+    new_header += emit_aliases(atdf)
+
+    new_header += emit_interrupt_vectors(atdf)
+
+    new_header += emit_constants(atdf)
+
+    new_header += emit_portpins(atdf)
+
+    new_header += emit_fuses(atdf)
+
+    new_header += emit_lockbits(atdf)
+
+    new_header += emit_signature(atdf)
 
     # Close out header file.
-    new_header += "\n\n#endif /* #ifdef _AVR_{}_H_INCLUDED */\n".format(devname)
+    new_header += "\n#endif /* #ifdef _AVR_{}_H_INCLUDED */\n".format(devname)
     return new_header
 
 
@@ -1228,6 +1653,122 @@ def process_pdsc(data):
     return changelog
 
 
+import urllib.request
+import re
+
+
+def dl_file(url, destination):
+    resp = urllib.request.urlopen(url)
+    length = int(resp.getheader("content-length"))
+    blocksize = 4096
+
+    outfilename = "{}/temp.atdf".format(destination)
+    basefilename = url[url.rfind("/") + 1 :]
+    destfilename = "{}/{}".format(destination, basefilename)
+    outfile = open(outfilename, "w+b")
+    size = 0.0
+    while True:
+        buf = resp.read(blocksize)
+        if not buf:
+            break
+        outfile.write(buf)
+        size += len(buf)
+        print(
+            "Downloading {} : {} bytes : {:.2f}%\r".format(
+                basefilename, length, size / length * 100
+            ),
+            end="",
+        )
+    outfile.close()
+    print("\nDONE.  Verifying")
+    zip = zipfile.ZipFile(outfilename)
+    if zip.testzip() is None:
+        print("Verified OK.")
+        os.rename(outfilename, destfilename)
+    else:
+        print("ERROR: File Failed to Verify!!!")
+        os.remove(outfilename)
+
+
+def fetch_microchip_packs(cachedir):
+    def check_filename_is_avr(filename):
+        # Check if the filename represents an AVR processor, or NOT.
+        # returns True if it does, false otherwise.
+        if filename.startswith("Microchip.AT"):
+            return True
+        if filename.startswith("Microchip.XMEGA"):
+            return True
+        return False
+
+    def synthetic_version(data):
+        return (xint(data[2]) * 1000000) + (xint(data[3]) * 1000) + xint(data[4])
+
+    MICROCHIP_PACK_SOURCE = "https://packs.download.microchip.com"
+    print("Downloading list of .atpack files from Microchip.  Please Wait...")
+    atdf_source = urllib.request.urlopen(MICROCHIP_PACK_SOURCE).read().decode("utf-8")
+
+    print("Processing...")
+    files = {}
+    matches = re.findall('data-link="(.*atpack)"', atdf_source)
+    for (
+        filename
+    ) in matches:  # A List of all .atpack files being distributed by Microchip
+        if check_filename_is_avr(filename):
+            filedata = filename.split(".")
+            filedata.append(filename)
+            if filedata[1] in files:
+                # Check if the data is the latest version
+                if synthetic_version(filedata) > synthetic_version(files[filedata[1]]):
+                    files[filedata[1]] = filedata
+            else:
+                files[filedata[1]] = filedata
+
+    # Now have list of relevant .atdf files.
+    # Check files in cachedir
+    cachefiles = []
+    for cachefile in os.listdir(cachedir):
+        if cachefile.endswith(".atpack"):
+            cachefiles.append(cachefile)
+
+    for file in cachefiles:
+        cachefile = "{}/{}".format(cachedir, file)
+
+        parts = file.split(".")  # Get file components.
+        # FIRST: Delete unknown .atdf files.
+        if parts[1] not in files:
+            print(
+                "\nCache File {} Unknown.  Removing from Cache Directory".format(file)
+            )
+            os.remove(cachefile)
+            continue
+
+        # Check if its current
+        if synthetic_version(parts) != synthetic_version(files[parts[1]]):
+            print(
+                "\nCache File {} Invalid Version. Should be {}.{}.{}.  Removing from Cache Directory".format(
+                    file, files[parts[1]][2], files[parts[1]][3], files[parts[1]][4]
+                )
+            )
+            os.remove(cachefile)
+            continue
+        else:
+            # It is current, so verify if its valid.
+            print("\nTesting cached .atdf file: {}".format(file))
+            atdf_file = zipfile.ZipFile(cachefile)
+            if atdf_file.testzip() is not None:
+                print("ATDF File is Corrupted! Removing from Cache Directory")
+                os.remove(cachefile)
+            else:
+                # File is good, and is valid so no need to download.
+                print("Cached ATDF File is OK! No need to download.")
+                files.pop(parts[1], None)
+
+    # By now files ONLY contains files we NEED to get from Microchip
+    for dlkey in files:
+        # Download them one by one
+        dl_file("{}/{}".format(MICROCHIP_PACK_SOURCE, files[dlkey][6]), cachedir)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -1237,13 +1778,35 @@ def main():
     )
     parser.add_argument(
         "outputdir",
-        help="Directory to output converted headerfiles into.",
+        nargs="?",
+        help="Directory to output converted headerfiles into. If not specified, nothing is saved.",
         type=dir_path,
+        default=None,
+    )
+    parser.add_argument(
+        "-s",
+        "--skip-atpack-check",
+        action="store_true",
+        help="Do not check for new atpacks from microchip",
+    )
+    parser.add_argument(
+        "-d", "--dump", action="store_true", help="Dump output to stdout"
+    )
+    parser.add_argument(
+        "-m",
+        "--mcu",
+        help="Specify the AVR MCU to generate for.  Default is ALL if not specified.",
     )
     args = parser.parse_args()
 
     processed_atpacks = 0
     changelog = []
+    if not args.skip_atpack_check:  # Dont skip atpack checks
+        fetch_microchip_packs(args.packdir)
+
+    if (args.outputdir is None) and (not args.dump):
+        # Dont generate headers.
+        exit(1)
 
     for filename in os.listdir(args.packdir):
         if filename.endswith(".atpack"):
@@ -1260,15 +1823,33 @@ def main():
                         print("    Processing {}".format(pdsc))
                         pdsc_data = atpack.read(pdsc)
                         changelog = process_pdsc(pdsc_data)
-                        print(changelog)
 
                 for atdf in atpack.namelist():
+                    filename = os.path.basename(atdf)
+                    if (args.mcu is not None) and (
+                        filename.lower() != "{}.atdf".format(args.mcu.lower())
+                    ):
+                        continue  # Don't process this file.
+
                     if atdf.endswith(".atdf"):
                         # then it IS an .atdf file to be processed.
                         print("    Processing {}".format(atdf))
                         atdf_data = atpack.read(atdf)
                         header_file = process_atdf(atdf_data, filename, atdf, changelog)
-                        print(header_file)
+
+                        if args.dump:
+                            print(header_file)
+
+                        if args.outputdir is not None:
+                            filename = (
+                                os.path.join(args.outputdir, filename[:-5].lower())
+                                + ".h"
+                            )
+                            print("        Saving {}".format(filename))
+                            outfile = open(filename, "w+")
+                            outfile.write(header_file)
+                            outfile.close()
+
                         processed_atdfs += 1
                 if processed_atpacks == 0:
                     print("No ATDF Files found in {}".format(fullname))
