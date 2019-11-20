@@ -621,7 +621,7 @@
 #elif defined(__AVR_ATtiny12__)
 #  include <avr/legacyio/iotn12.h>
 #elif defined(__AVR_ATtiny11__)
-#  include <avr/legacyio/legacyio/iotn11.h>
+#  include <avr/legacyio/iotn11.h>
 #elif defined(__AVR_M3000__)
 #  include <avr/legacyio/iom3000.h>
 #elif defined(__AVR_DEV_LIB_NAME__)

@@ -35,7 +35,7 @@
 #ifndef _AVR_IOTN24_H_
 #define _AVR_IOTN24_H_ 1
 
-#include <avr/iotnx4.h>
+#include <avr/legacyio/iotnx4.h>
 
 #define SPM_PAGESIZE 32
 #define RAMSTART     (0x60)

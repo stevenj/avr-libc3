@@ -33,7 +33,7 @@
 #ifndef _AVR_IOM88_H_
 #define _AVR_IOM88_H_ 1
 
-#include <avr/iomx8.h>
+#include <avr/legacyio/iomx8.h>
 
 /* Constants */
 #define SPM_PAGESIZE 64

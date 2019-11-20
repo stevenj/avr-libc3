@@ -35,7 +35,7 @@
 #ifndef _AVR_IOCAN32_H_
 #define _AVR_IOCAN32_H_ 1
 
-#include <avr/iocanxx.h>
+#include <avr/legacyio/iocanxx.h>
 
 /* Constants */
 #define SPM_PAGESIZE 256

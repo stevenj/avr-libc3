@@ -35,7 +35,7 @@
 #ifndef _AVR_IOTN861_H_
 #define _AVR_IOTN861_H_ 1
 
-#include <avr/iotnx61.h>
+#include <avr/legacyio/iotnx61.h>
 
 /* Constants */
 #define SPM_PAGESIZE 64

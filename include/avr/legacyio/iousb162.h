@@ -36,7 +36,7 @@
 #ifndef _AVR_AT90USB162_H_
 #define _AVR_AT90USB162_H_ 1
 
-#include <avr/iousbxx2.h>
+#include <avr/legacyio/iousbxx2.h>
 
 /* Constants */
 #define SPM_PAGESIZE 128

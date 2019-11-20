@@ -35,7 +35,7 @@
 #ifndef _AVR_IOM1280_H_
 #define _AVR_IOM1280_H_ 1
 
-#include <avr/iomxx0_1.h>
+#include <avr/legacyio/iomxx0_1.h>
 
 /* Constants */
 #define SPM_PAGESIZE    256

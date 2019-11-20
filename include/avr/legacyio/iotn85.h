@@ -35,7 +35,7 @@
 #ifndef _AVR_IOTN85_H_
 #define _AVR_IOTN85_H_ 1
 
-#include <avr/iotnx5.h>
+#include <avr/legacyio/iotnx5.h>
 
 /* Constants */
 #define SPM_PAGESIZE 64
