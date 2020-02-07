@@ -141,6 +141,12 @@
     #define _SLEEP_CONTROL_REG  SLEEP_CTRL
     #define _SLEEP_ENABLE_MASK  SLEEP_SEN_bm
 
+#elif defined(SLPCTRL)
+
+    /* ATTiny1 series devices */
+    #define _SLEEP_CONTROL_REG  SLPCTRL_CTRLA
+    #define _SLEEP_ENABLE_MASK  SLPCTRL_SEN_bm
+
 #elif defined(SMCR)
 
     #define _SLEEP_CONTROL_REG  SMCR
@@ -196,6 +202,12 @@
         _SLEEP_CONTROL_REG = ((_SLEEP_CONTROL_REG & ~(SLEEP_SMODE1_bm | SLEEP_SMODE0_bm)) | (mode)); \
     } while(0)
 
+#elif defined(SLPCTRL_SMODE_gm)
+
+    #define set_sleep_mode(mode) \
+        do { \
+            _SLEEP_CONTROL_REG = ((_SLEEP_CONTROL_REG & ~SLPCTRL_SMODE_gm) | (mode)); \
+        } while(0)
 #else
 
     #define set_sleep_mode(mode) \
