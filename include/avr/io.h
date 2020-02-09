@@ -152,8 +152,8 @@ typedef volatile uint32_t register32_t;
           register8_t regname##1;   \
           register8_t regname##2;   \
           register8_t regname##3;   \
-          \    
-        };                                                                               \
+          \
+        };                                                                              \
       }
 #  endif /* NOT __ASSEMBLER__ */
 
@@ -220,22 +220,24 @@ typedef volatile uint32_t register32_t;
 #    define E2PAGESIZE EEPROM_PAGE_SIZE
 #  endif
 
-#  include <avr/portpins.h>
+#endif /* AVR_LIBC_LEGACY_IO */
 
-#  include <avr/common.h>
+/* these files are always included whether using LEGACY_IO or not */
+#include <avr/portpins.h>
 
-#  include <avr/version.h>
+#include <avr/common.h>
 
-#  if __AVR_ARCH__ >= 100
-#    include <avr/xmega.h>
-#  endif
+#include <avr/version.h>
+
+#if __AVR_ARCH__ >= 100
+#  include <avr/xmega.h>
+#endif
 
 /* Include fuse.h after individual IO header files. */
-#  include <avr/fuse.h>
+#include <avr/fuse.h>
 
 /* Include lock.h after individual IO header files. */
-#  include <avr/lock.h>
+#include <avr/lock.h>
 
-#endif /* AVR_LIBC_LEGACY_IO */
 
 #endif /* _AVR_IO_H_ */

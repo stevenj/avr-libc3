@@ -35,7 +35,7 @@
 #ifndef _AVR_IOM16HVA_H_
 #define _AVR_IOM16HVA_H_ 1
 
-#include <avr/iomxxhva.h>
+#include <avr/legacyio/iomxxhva.h>
 
 /* Constants */
 #define SPM_PAGESIZE 128

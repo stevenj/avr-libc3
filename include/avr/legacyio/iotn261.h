@@ -35,7 +35,7 @@
 #ifndef _AVR_IOTN261_H_
 #define _AVR_IOTN261_H_ 1
 
-#include <avr/iotnx61.h>
+#include <avr/legacyio/iotnx61.h>
 
 #define SPM_PAGESIZE 32
 #define RAMSTART     (0x60)
