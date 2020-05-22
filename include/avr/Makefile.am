@@ -29,6 +29,8 @@
 # $Id$
 #
 
+SUBDIRS = io legacyio
+
 avrdir = $(prefix)/avr/include/avr
 avr_HEADERS = \
 	boot.h \
