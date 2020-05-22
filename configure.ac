@@ -120,7 +120,7 @@ AC_NO_EXECUTABLES
 
 dnl Minimum version of Automake is 1.8.
 dnl We don't want the gzip distribution tarball anymore.
-AM_INIT_AUTOMAKE([1.8 dist-bzip2 no-dist-gzip])
+AM_INIT_AUTOMAKE([1.8 dist-bzip2 no-dist-gzip foreign])
 
 # We don't want touse the cflags from the environment since we need control
 # of this when we're building the libs.
