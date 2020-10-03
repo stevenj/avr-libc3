@@ -120,7 +120,7 @@ AC_NO_EXECUTABLES
 
 dnl Minimum version of Automake is 1.8.
 dnl We don't want the gzip distribution tarball anymore.
-AM_INIT_AUTOMAKE([1.8 dist-bzip2 no-dist-gzip])
+AM_INIT_AUTOMAKE([1.8 dist-bzip2 no-dist-gzip foreign])
 
 # We don't want touse the cflags from the environment since we need control
 # of this when we're building the libs.
@@ -299,7 +299,7 @@ dnl
 dnl   $ pngtopnm foo.png > tmp.pnm
 dnl   $ pnmtopng -transparent white tmp.pnm > foo.png
 dnl
-dnl @version 
+dnl @version
 dnl @author Theodore A. Roth <troth@openavr.org> and Eric B. Weddington <eweddington@cso.atmel.com>
 dnl
 AC_DEFUN([CHECK_PNG_UTILS],[dnl
@@ -1363,6 +1363,8 @@ AC_CONFIG_FILES([
 	include/Makefile
 	include/avr/Makefile
 	include/avr/builtins.h
+	include/avr/io/Makefile
+	include/avr/legacyio/Makefile
 	include/compat/Makefile
 	include/util/Makefile
 	include/util/delay.h
@@ -1517,15 +1519,15 @@ AC_CONFIG_FILES([
 	avr/lib/avr5/at90scr100/Makefile
 	avr/lib/avr5/at90usb646/Makefile
 	avr/lib/avr5/at90usb647/Makefile
-	avr/lib/avr5/at94k/Makefile 
-	avr/lib/avr5/ata5702m322/Makefile 
-	avr/lib/avr5/ata5782/Makefile 
-	avr/lib/avr5/ata5790/Makefile 
-	avr/lib/avr5/ata5790n/Makefile 
-	avr/lib/avr5/ata5795/Makefile 
-	avr/lib/avr5/ata5831/Makefile 
-	avr/lib/avr5/ata6613c/Makefile 
-	avr/lib/avr5/ata6614q/Makefile 
+	avr/lib/avr5/at94k/Makefile
+	avr/lib/avr5/ata5702m322/Makefile
+	avr/lib/avr5/ata5782/Makefile
+	avr/lib/avr5/ata5790/Makefile
+	avr/lib/avr5/ata5790n/Makefile
+	avr/lib/avr5/ata5795/Makefile
+	avr/lib/avr5/ata5831/Makefile
+	avr/lib/avr5/ata6613c/Makefile
+	avr/lib/avr5/ata6614q/Makefile
 	avr/lib/avr5/atmega16/Makefile
 	avr/lib/avr5/atmega16a/Makefile
 	avr/lib/avr5/atmega161/Makefile
